@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChequeSentinel — Fraud Detection</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
+  <style>
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2a2d3e;
+      --accent:   #4f8ef7;
+      --danger:   #ff4560;
+      --warn:     #f5a623;
+      --ok:       #00e396;
+      --muted:    #6b7280;
+      --text:     #e2e8f0;
+      --subtext:  #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    header h1 { font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
+    header h1 span { color: var(--accent); }
+    #ws-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--subtext); }
+    #ws-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background 0.3s; }
+    #ws-dot.connected { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+    #ws-dot.error     { background: var(--danger); }
+
+    /* ── Layout ── */
+    main {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 16px;
+      padding: 16px 24px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .card-title {
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      color: var(--subtext); margin-bottom: 14px;
+    }
+
+    /* ── Stat chips ── */
+    .stats-row {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+    }
+    .stat-chip {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 16px;
+    }
+    .stat-chip .label { font-size: 11px; color: var(--subtext); margin-bottom: 6px; }
+    .stat-chip .value { font-size: 24px; font-weight: 700; }
+    .stat-chip .value.danger { color: var(--danger); }
+    .stat-chip .value.warn   { color: var(--warn); }
+    .stat-chip .value.ok     { color: var(--ok); }
+    .stat-chip .value.accent { color: var(--accent); }
+
+    /* ── Alerts panel ── */
+    #alerts-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; max-height: 680px; }
+    .alert-card {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px;
+      cursor: pointer; transition: border-color 0.2s;
+    }
+    .alert-card:hover  { border-color: var(--accent); }
+    .alert-card.active { border-color: var(--accent); background: #1a2035; }
+    .alert-card .ac-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .alert-card .ac-id    { font-weight: 600; font-size: 13px; }
+    .alert-card .ac-score { font-size: 13px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+    .score-high { background: rgba(255,69,96,0.2);  color: var(--danger); }
+    .score-med  { background: rgba(245,166,35,0.2); color: var(--warn); }
+    .score-low  { background: rgba(79,142,247,0.2); color: var(--accent); }
+    .ac-signals { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .sig-tag    { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(255,69,96,0.15); color: var(--danger); }
+    .ac-rank    { font-size: 11px; color: var(--muted); }
+
+    /* ── Detail panel ── */
+    #detail-panel {
+      overflow-y: auto;
+      max-height: 900px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    /* Summary section */
+    #detail-summary { padding-bottom: 14px; }
+    #detail-account { font-size: 18px; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+    #detail-meta    { font-size: 12px; color: var(--subtext); margin-bottom: 12px; }
+    .summary-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 8px; margin-bottom: 4px;
+    }
+    .summary-stat {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 10px;
+      text-align: center;
+    }
+    .ss-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+    .ss-value { font-size: 16px; font-weight: 700; }
+
+    /* Section divider */
+    .section-divider {
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      color: var(--subtext);
+      border-top: 1px solid var(--border);
+      padding-top: 12px; margin-top: 14px; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .section-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+
+    /* Ring section in detail panel */
+    #detail-ring-section { margin-bottom: 4px; }
+    #detail-ring-net {
+      height: 320px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .ring-info-row {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px;
+    }
+    .ring-info-badge {
+      font-size: 10px; padding: 3px 8px; border-radius: 4px;
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--subtext);
+    }
+    .ring-info-badge.type-emp    { border-color: #4f8ef755; color: var(--accent); }
+    .ring-info-badge.type-cross  { border-color: #f5a62355; color: var(--warn); }
+    .ring-info-badge.risk-HIGH   { border-color: #ff456055; color: var(--danger); }
+    .ring-no-ring { font-size: 12px; color: var(--muted); padding: 4px 0; }
+    .ring-hidden-note {
+      margin-top: 6px; font-size: 10px; color: var(--warn);
+      background: rgba(245,166,35,0.08);
+      border: 1px solid rgba(245,166,35,0.2);
+      padding: 4px 8px; border-radius: 4px;
+    }
+    .ring-connector-list { font-size: 11px; color: var(--subtext); margin-top: 4px; }
+    .ring-connector-list span { color: var(--accent); font-weight: 600; }
+
+    /* Signal bars */
+    #signal-bars { display: flex; flex-direction: column; gap: 10px; }
+    .signal-row { display: grid; grid-template-columns: 185px 1fr 60px; gap: 10px; align-items: center; }
+    .signal-name { font-size: 11px; color: var(--subtext); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bar-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+    .bar-fill  { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+    .bar-fill.danger { background: var(--danger); }
+    .bar-fill.warn   { background: var(--warn); }
+    .bar-fill.ok     { background: var(--ok); }
+    .signal-val { font-size: 11px; font-weight: 600; text-align: right; }
+
+    /* ── Score table ── */
+    #score-table-wrap { grid-column: 1 / -1; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    thead th {
+      text-align: left; padding: 8px 10px;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--subtext); border-bottom: 1px solid var(--border);
+    }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background 0.15s; }
+    tbody tr:hover { background: rgba(255,255,255,0.03); }
+    tbody td { padding: 8px 10px; }
+    .badge-flag { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 600; }
+    .badge-flag.yes { background: rgba(255,69,96,0.2);  color: var(--danger); }
+    .badge-flag.no  { background: rgba(0,227,150,0.1);  color: var(--ok); }
+    .mini-bar { display: flex; align-items: center; gap: 6px; }
+    .mini-bar-track { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .mini-bar-fill  { height: 100%; border-radius: 3px; }
+
+    .risk-badge    { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+    .risk-badge.HIGH   { background: rgba(255,69,96,0.2);  color: var(--danger); }
+    .risk-badge.MEDIUM { background: rgba(245,166,35,0.2); color: var(--warn); }
+    .risk-badge.LOW    { background: rgba(0,227,150,0.1);  color: var(--ok); }
+    .ring-type-badge {
+      font-size: 10px; color: var(--subtext);
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 2px 7px; border-radius: 4px;
+      display: inline-block; margin-bottom: 6px;
+    }
+
+    /* ── Misc ── */
+    #last-update { font-size: 11px; color: var(--muted); text-align: right; margin-top: 8px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Cheque<span>Sentinel</span></h1>
+  <div id="ws-status">
+    <div id="ws-dot"></div>
+    <span id="ws-label">Connecting…</span>
+  </div>
+</header>
+
+<main>
+  <!-- ── Stat chips ── -->
+  <div class="stats-row">
+    <div class="stat-chip">
+      <div class="label">Total Accounts</div>
+      <div class="value accent" id="stat-accounts">—</div>
+    </div>
+    <div class="stat-chip">
+      <div class="label">Flagged Accounts</div>
+      <div class="value danger" id="stat-flagged">—</div>
+    </div>
+    <div class="stat-chip">
+      <div class="label">Highest Score</div>
+      <div class="value danger" id="stat-top-score">—</div>
+    </div>
+    <div class="stat-chip">
+      <div class="label">Fraud Rings</div>
+      <div class="value warn" id="stat-rings">—</div>
+    </div>
+    <div class="stat-chip">
+      <div class="label">Signals Triggered</div>
+      <div class="value ok" id="stat-signals">—</div>
+    </div>
+  </div>
+
+  <!-- ── Alert list ── -->
+  <div class="card">
+    <div class="card-title">Suspicious Accounts</div>
+    <div id="alerts-list"></div>
+  </div>
+
+  <!-- ── Detail panel ── -->
+  <div class="card" id="detail-panel">
+
+    <!-- Summary -->
+    <div id="detail-summary">
+      <div id="detail-account">Select an account →</div>
+      <div id="detail-meta"></div>
+      <div class="summary-grid" id="detail-stats-grid" style="display:none">
+        <div class="summary-stat">
+          <div class="ss-label">Rank</div>
+          <div class="ss-value accent" id="ds-rank">—</div>
+        </div>
+        <div class="summary-stat">
+          <div class="ss-label">Signals Fired</div>
+          <div class="ss-value danger" id="ds-sigs">—</div>
+        </div>
+        <div class="summary-stat">
+          <div class="ss-label">In Fraud Ring</div>
+          <div class="ss-value warn" id="ds-ring">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fraud Ring for selected account -->
+    <div id="detail-ring-section" style="display:none">
+      <div class="section-divider">Fraud Ring</div>
+      <div id="detail-ring-net"></div>
+      <div id="detail-ring-info"></div>
+    </div>
+
+    <!-- Signal Breakdown -->
+    <div id="detail-signals-section" style="display:none">
+      <div class="section-divider">Signal Breakdown</div>
+      <div id="signal-bars"></div>
+    </div>
+
+  </div>
+
+  <!-- ── Score table ── -->
+  <div class="card" id="score-table-wrap">
+    <div class="card-title">All Accounts — Fraud Score Ranking</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th><th>Account ID</th><th>Fraud Score</th>
+          <th>Anomaly Score</th><th>Flagged</th><th>Top Signal</th>
+        </tr>
+      </thead>
+      <tbody id="score-tbody"></tbody>
+    </table>
+    <div id="last-update"></div>
+  </div>
+</main>
+
+<script>
+  // ── Config & globals ───────────────────────────────────────────────────────
+  const WS_SIGNALS = `ws://${location.host}/ws/signals`;
+  const WS_ALERTS  = `ws://${location.host}/ws/alerts`;
+
+  const SIGNAL_LABELS = {
+    chequebook_velocity:           "Chequebook Velocity",
+    chequebook_per_year:           "Chequebooks / Year",
+    employee_chequebook_bias:      "Employee CB Bias (Branch-Norm)",
+    branch_velocity_ratio:         "Branch Peer Velocity Ratio",
+    cheque_frequency:              "Cheque Frequency",
+    sequential_cheque_pattern:     "Sequential Pattern",
+    structured_amount_pattern:     "Structured Amounts",
+    signatory_entropy:             "Signatory Entropy",
+    signatory_concentration:       "Signatory Concentration",
+    employee_account_concentration:"Employee Acct Conc. (Branch-Norm)",
+    employee_transaction_ratio:    "Employee Txn Ratio",
+    withdrawal_velocity:           "Withdrawal Velocity",
+    burst_withdrawals:             "Burst Withdrawals",
+    structured_withdrawals:        "Structured Withdrawals",
+    channel_mixing_ratio:          "Channel Mix (Online Ratio)",
+    online_device_concentration:   "Online Device Concentration",
+    online_odd_hour_ratio:         "Odd-Hour Login Ratio",
+    online_session_anomaly:        "Session Anomaly (Bot-like)",
+    cross_channel_coordination:    "Cross-Channel Coordination",
+    offline_employee_bias:         "Offline Employee Bias",
+  };
+
+  const sigMax      = {};
+  let   allAccounts = [];
+  let   alertsData  = [];
+  let   ringsData   = [];       // all fraud rings loaded from API
+  let   selectedAcct = null;
+  let   _detailRingNet = null;  // vis.Network instance for detail panel ring
+
+  const el = id => document.getElementById(id);
+
+  // ── Fetch metadata ─────────────────────────────────────────────────────────
+  fetch("/api/v1/metadata")
+    .then(r => r.json())
+    .then(d => {
+      el("stat-accounts").textContent = d.num_accounts ?? "—";
+      el("stat-flagged").textContent  = d.total_flagged_accounts ?? "—";
+    }).catch(() => {});
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function scoreClass(s) {
+    return s >= 0.7 ? "danger" : s >= 0.35 ? "warn" : "ok";
+  }
+  function scoreLabel(s) { return (s * 100).toFixed(1) + "%"; }
+
+  function barColour(name, val, max) {
+    const norm   = max > 0 ? val / max : 0;
+    const lowBad = ["signatory_entropy"];
+    if (lowBad.includes(name))
+      return norm < 0.2 ? "danger" : norm < 0.5 ? "warn" : "ok";
+    return norm > 0.7 ? "danger" : norm > 0.35 ? "warn" : "ok";
+  }
+
+  // Find all rings that contain a given account
+  function findAccountRings(accountId) {
+    return ringsData.filter(r =>
+      r.accounts.some(a => a.account_id === accountId)
+    );
+  }
+
+  // ── WebSocket: signals ─────────────────────────────────────────────────────
+  function connectSignals() {
+    const ws = new WebSocket(WS_SIGNALS);
+    ws.onopen = () => {
+      el("ws-dot").className    = "connected";
+      el("ws-label").textContent = "Live";
+    };
+    ws.onerror = ws.onclose = () => {
+      el("ws-dot").className    = "error";
+      el("ws-label").textContent = "Reconnecting…";
+      setTimeout(connectSignals, 3000);
+    };
+    ws.onmessage = ({ data }) => {
+      const msg = JSON.parse(data);
+      if (msg.type === "snapshot" || msg.type === "update") {
+        if (msg.type === "snapshot") {
+          msg.accounts.forEach(a => {
+            Object.entries(a.signals).forEach(([k, v]) => {
+              sigMax[k] = Math.max(sigMax[k] || 0, Math.abs(v));
+            });
+          });
+        }
+        allAccounts = msg.accounts;
+        renderTable(msg.accounts);
+        if (msg.type === "snapshot" && msg.accounts.length)
+          selectAccount(msg.accounts[0]);
+        el("stat-top-score").textContent = msg.accounts.length
+          ? scoreLabel(msg.accounts[0].fraud_score) : "—";
+        el("last-update").textContent =
+          "Last updated: " + new Date(msg.timestamp).toLocaleTimeString();
+      }
+      if (msg.type === "account_detail") renderDetail(msg);
+    };
+    window._signalsWs = ws;
+  }
+
+  // ── WebSocket: alerts ──────────────────────────────────────────────────────
+  function connectAlerts() {
+    const ws = new WebSocket(WS_ALERTS);
+    ws.onmessage = ({ data }) => {
+      const msg = JSON.parse(data);
+      if (msg.type === "alerts") {
+        alertsData = msg.alerts;
+        renderAlerts(msg.alerts);
+        if (msg.alerts.length)
+          el("stat-signals").textContent = msg.alerts[0].num_triggered ?? "—";
+      }
+    };
+    ws.onerror = ws.onclose = () => setTimeout(connectAlerts, 3000);
+  }
+
+  // ── Render: alerts panel ───────────────────────────────────────────────────
+  function renderAlerts(alerts) {
+    const list = el("alerts-list");
+    list.innerHTML = "";
+    alerts.forEach(a => {
+      const sigTags = Object.keys(a.triggered_signals || {})
+        .map(s => `<span class="sig-tag">${SIGNAL_LABELS[s] || s}</span>`).join("");
+      const sc   = scoreClass(a.fraud_score);
+      const card = document.createElement("div");
+      card.className = "alert-card" + (a.account_id === selectedAcct ? " active" : "");
+      card.dataset.acct = a.account_id;
+      card.innerHTML = `
+        <div class="ac-header">
+          <span class="ac-id">${a.account_id}</span>
+          <span class="ac-score score-${sc === "danger" ? "high" : sc === "warn" ? "med" : "low"}">
+            ${scoreLabel(a.fraud_score)}
+          </span>
+        </div>
+        <div class="ac-rank">Rank #${a.rank} · ${a.num_triggered} signals triggered</div>
+        <div class="ac-signals">${sigTags}</div>`;
+      card.addEventListener("click", () => {
+        selectedAcct = a.account_id;
+        document.querySelectorAll(".alert-card").forEach(c => c.classList.remove("active"));
+        card.classList.add("active");
+        // Request fresh detail via WS; also render from local data
+        const localAcct = allAccounts.find(x => x.account_id === a.account_id);
+        if (localAcct) renderDetail({ ...localAcct, alert: a });
+        if (window._signalsWs?.readyState === 1)
+          window._signalsWs.send(JSON.stringify({ type: "subscribe", account_id: a.account_id }));
+      });
+      list.appendChild(card);
+    });
+  }
+
+  // ── Select account (from table or snapshot) ────────────────────────────────
+  function selectAccount(acct) {
+    selectedAcct = acct.account_id;
+    const alert  = alertsData.find(a => a.account_id === acct.account_id) || null;
+    renderDetail({ ...acct, alert });
+    document.querySelectorAll(".alert-card").forEach(c =>
+      c.classList.toggle("active", c.dataset.acct === acct.account_id)
+    );
+  }
+
+  // ── Render: full detail panel ──────────────────────────────────────────────
+  function renderDetail(d) {
+    const accId   = d.account_id;
+    const score   = d.fraud_score ?? 0;
+    const flagged = d.is_flagged  ?? false;
+    const alert   = d.alert       || alertsData.find(a => a.account_id === accId) || null;
+
+    // 1. Summary
+    el("detail-account").textContent = accId;
+    const sc = scoreClass(score);
+    el("detail-meta").innerHTML =
+      `Fraud score: <strong style="color:var(--${sc})">${scoreLabel(score)}</strong>` +
+      ` &nbsp;·&nbsp; ` +
+      (flagged
+        ? `<span style="color:var(--danger)">⚠ FLAGGED</span>`
+        : `<span style="color:var(--ok)">✓ Clean</span>`);
+
+    const acctRings = findAccountRings(accId);
+    const rank      = alert?.rank         ?? "—";
+    const numSigs   = alert?.num_triggered ?? "—";
+    const ringLabel = acctRings.length > 0 ? acctRings.length + " ring(s)" : "None";
+
+    el("detail-stats-grid").style.display = "grid";
+    el("ds-rank").textContent = rank !== "—" ? `#${rank}` : "—";
+    el("ds-sigs").textContent = numSigs;
+    el("ds-ring").textContent = ringLabel;
+    el("ds-ring").style.color = acctRings.length > 0 ? "var(--warn)" : "var(--ok)";
+
+    // 2. Fraud Ring section
+    const ringSection = el("detail-ring-section");
+    ringSection.style.display = "block";
+    el("detail-ring-net").innerHTML = "";
+    const ringInfo = el("detail-ring-info");
+    ringInfo.innerHTML = "";
+
+    if (acctRings.length === 0) {
+      el("detail-ring-net").style.display = "none";
+      ringInfo.innerHTML = `<div class="ring-no-ring">This account is not part of any detected fraud ring.</div>`;
+    } else {
+      el("detail-ring-net").style.display = "block";
+      // Merge all rings for this account into one vis network
+      renderDetailRingNetwork(acctRings, accId);
+      acctRings.forEach(ring => {
+        const typeLabel = ring.connection_type === "cross_branch_collusion"
+          ? "Cross-Branch Collusion" : "Employee Dominance";
+        const connectors = ring.connectors.map(c => `<span>${c.id}${c.role ? ` (${c.role})` : ""}</span>`).join(", ");
+        const hiddenNote = ring.hidden_accounts > 0
+          ? `<div class="ring-hidden-note">⚠ ${ring.hidden_accounts} account(s) in this ring NOT flagged by ML — only graph detected the link</div>` : "";
+        const div = document.createElement("div");
+        div.style.marginBottom = "8px";
+        div.innerHTML = `
+          <div class="ring-info-row">
+            <span class="ring-info-badge risk-${ring.risk_level}">${ring.risk_level} RISK</span>
+            <span class="ring-info-badge type-${ring.connection_type === "cross_branch_collusion" ? "cross" : "emp"}">${typeLabel}</span>
+            <span class="ring-info-badge">${ring.ring_id}</span>
+          </div>
+          <div class="ring-connector-list">Via: ${connectors}</div>
+          ${hiddenNote}`;
+        ringInfo.appendChild(div);
+      });
+    }
+
+    // 3. Signal Breakdown
+    const sigSection = el("detail-signals-section");
+    sigSection.style.display = "block";
+    const bars = el("signal-bars");
+    bars.innerHTML = "";
+    Object.entries(d.signals || {}).forEach(([name, val]) => {
+      const max   = sigMax[name] || 1;
+      const pct   = Math.min(100, Math.abs(val) / max * 100);
+      const col   = barColour(name, Math.abs(val), max);
+      const label = SIGNAL_LABELS[name] || name;
+      // Highlight triggered signals from the alert
+      const isTriggered = alert?.triggered_signals?.[name];
+      const row = document.createElement("div");
+      row.className = "signal-row";
+      row.style.opacity = isTriggered ? "1" : "0.55";
+      row.innerHTML = `
+        <span class="signal-name" title="${name}">${label}${isTriggered ? " ●" : ""}</span>
+        <div class="bar-track">
+          <div class="bar-fill ${col}" style="width:${pct.toFixed(1)}%"></div>
+        </div>
+        <span class="signal-val" style="color:var(--${col})">${+val.toFixed(3)}</span>`;
+      bars.appendChild(row);
+    });
+
+    // Highlight the ring card in the overview for the selected account
+    document.querySelectorAll(".ring-card").forEach(c => {
+      const ringId = c.dataset.ringId;
+      c.classList.toggle("active", acctRings.some(r => r.ring_id === ringId));
+    });
+  }
+
+  // ── Ring network for detail panel ──────────────────────────────────────────
+  function renderDetailRingNetwork(rings, highlightAccId) {
+    const container = el("detail-ring-net");
+    if (!container || typeof vis === "undefined") return;
+    if (_detailRingNet) { _detailRingNet.destroy(); _detailRingNet = null; }
+
+    const nodes = new vis.DataSet();
+    const edges = new vis.DataSet();
+    let nid = 1;
+    const idMap = {};
+
+    rings.forEach(ring => {
+      // Account nodes
+      ring.accounts.forEach(acc => {
+        if (idMap[acc.account_id] !== undefined) return;
+        const id       = nid++;
+        idMap[acc.account_id] = id;
+        const isHL     = acc.account_id === highlightAccId;
+        const flagged  = acc.is_flagged;
+        nodes.add({
+          id, label: acc.account_id, shape: "ellipse",
+          size: isHL ? 22 : 16,
+          color: {
+            background: isHL ? (flagged ? "#5a0a14" : "#2d1a05") : (flagged ? "#2a0f14" : "#2a1f08"),
+            border:     flagged ? "#ff4560" : "#f5a623",
+            highlight:  { background: "#ff4560", border: "#fff" },
+          },
+          font: { color: flagged ? "#ff4560" : "#f5a623", size: isHL ? 12 : 10, bold: isHL },
+          borderWidth: isHL ? 2.5 : 1.5,
+        });
+      });
+      // Employee nodes
+      ring.connectors.forEach(conn => {
+        if (idMap[conn.id] !== undefined) return;
+        const id  = nid++;
+        idMap[conn.id] = id;
+        const lbl = conn.role ? `${conn.id}\n${conn.role}` : conn.id;
+        nodes.add({
+          id, label: lbl, shape: "box",
+          color: {
+            background: "#0f1e35",
+            border:     "#4f8ef7",
+            highlight:  { background: "#4f8ef7", border: "#fff" },
+          },
+          font: { color: "#4f8ef7", size: 10, multi: true },
+        });
+      });
+      // Edges: connector → account
+      ring.connectors.forEach(conn => {
+        ring.accounts.forEach(acc => {
+          const lbl = acc.concentration
+            ? `${(acc.concentration * 100).toFixed(0)}%` : (conn.role || "");
+          edges.add({
+            from: idMap[conn.id], to: idMap[acc.account_id],
+            label: lbl,
+            color: { color: "#2a2d3e", highlight: "#4f8ef7" },
+            font:  { color: "#6b7280", size: 9, align: "middle" },
+            arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+            smooth: { type: "curvedCW", roundness: 0.2 },
+          });
+        });
+      });
+      // Cross-branch dashed link between two employees
+      if (ring.connection_type === "cross_branch_collusion" && ring.connectors.length >= 2) {
+        const e1 = idMap[ring.connectors[0].id];
+        const e2 = idMap[ring.connectors[1].id];
+        if (e1 && e2 && e1 !== e2) {
+          edges.add({
+            from: e1, to: e2, dashes: true, label: "Cross-Branch",
+            color: { color: "#f5a623" },
+            font:  { color: "#f5a623", size: 9 },
+            arrows: { to: { enabled: false } },
+            smooth: { type: "curvedCCW", roundness: 0.3 },
+          });
+        }
+      }
+    });
+
+    _detailRingNet = new vis.Network(container, { nodes, edges }, {
+      nodes:   { borderWidth: 1.5, margin: 5 },
+      edges:   { width: 1.2 },
+      physics: {
+        stabilization: { iterations: 120 },
+        solver: "repulsion",
+        repulsion: { nodeDistance: 100, springLength: 130 },
+      },
+      interaction: { dragNodes: true, zoomView: true, dragView: true },
+      layout: { randomSeed: 42 },
+    });
+  }
+
+  // ── Render: score table ────────────────────────────────────────────────────
+  function renderTable(accounts) {
+    const tbody = el("score-tbody");
+    tbody.innerHTML = "";
+    accounts.forEach((a, i) => {
+      const sc  = scoreClass(a.fraud_score);
+      const pct = (a.fraud_score * 100).toFixed(1);
+      const topSig = Object.entries(a.signals || {})
+        .sort((x, y) => Math.abs(y[1]) / (sigMax[y[0]] || 1) - Math.abs(x[1]) / (sigMax[x[0]] || 1))[0];
+      const topSigLabel = topSig ? (SIGNAL_LABELS[topSig[0]] || topSig[0]) : "—";
+      const inRing = findAccountRings(a.account_id).length > 0;
+      const tr = document.createElement("tr");
+      tr.style.cursor = "pointer";
+      tr.innerHTML = `
+        <td>${i + 1}</td>
+        <td style="font-weight:600">
+          ${a.account_id}
+          ${inRing ? `<span style="font-size:9px;color:var(--warn);margin-left:4px">● ring</span>` : ""}
+        </td>
+        <td>
+          <div class="mini-bar">
+            <div class="mini-bar-track">
+              <div class="mini-bar-fill" style="width:${pct}%;background:var(--${sc})"></div>
+            </div>
+            <span style="min-width:40px;text-align:right;color:var(--${sc})">${pct}%</span>
+          </div>
+        </td>
+        <td style="color:var(--subtext)">${a.anomaly_score.toFixed(4)}</td>
+        <td><span class="badge-flag ${a.is_flagged ? "yes" : "no"}">${a.is_flagged ? "YES" : "no"}</span></td>
+        <td style="color:var(--subtext);font-size:11px">${topSigLabel}</td>`;
+      tr.addEventListener("click", () => selectAccount(a));
+      tbody.appendChild(tr);
+    });
+  }
+
+  // ── Fraud Rings overview ───────────────────────────────────────────────────
+  function loadFraudRings() {
+    fetch("/api/v1/graph/fraud-rings")
+      .then(r => r.json())
+      .then(data => {
+        ringsData = data.rings || [];
+        el("stat-rings").textContent = ringsData.length || "—";
+      })
+      .catch(() => {
+        el("stat-rings").textContent = "—";
+      });
+  }
+
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+  loadFraudRings();
+  connectSignals();
+  connectAlerts();
+</script>
+</body>
+</html>
